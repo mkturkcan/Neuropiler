@@ -112,7 +112,7 @@ def error_check_python(filename):
                              stdout=devnull)
         p.communicate()
         if p.returncode:
-            print("Coulf not interpret python code due to an error.",
+            print("Could not interpret python code due to an error.",
                   file=sys.stderr)
 
     # Success on 0 (return True)
@@ -166,13 +166,13 @@ def main():
     4. Actual translation.
     """
     args = get_args()
-
+    """
     if not error_check_python(args.file):
         return 1
     elif args.ast_tree:
         translate.prettyparseprintfile(args.file)
         return 0
-
+    """
     translated_code = translate.translate(
         args.file, indent_size=args.indent_size)
 

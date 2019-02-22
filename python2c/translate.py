@@ -8,7 +8,7 @@ import ast
 import blocks
 
 from block_utils import *
-
+from collections import OrderedDict
 
 def prettyparseprintfile(filename, spaces=4):
     with open(filename, "r") as f:
@@ -49,26 +49,68 @@ def includes_from_code(code):
     C code.
     """
     includes = []
-    if any("print" in line for line in code):
-        includes.append(blocks.StringBlock("#include <stdio.h>"))
-        includes.append(blocks.StringBlock('#include "c_utils/utils.h"'))
-
+    # if any("print" in line for line in code):
+    #     includes.append(blocks.StringBlock("#include <stdio.h>"))
+    #     includes.append(blocks.StringBlock('#include "c_utils/utils.h"'))
+    includes.append(blocks.StringBlock('#define EXP exp%(fletter)s'))
+    includes.append(blocks.StringBlock('#define POW pow%(fletter)s'))
+    includes.append(blocks.StringBlock('#define ABS fabs%(fletter)s'))
     # Add a blank line for no reason
     includes.append(blocks.StringBlock())
     return includes
 
 
-def main_function():
+def main_function(updates = ['spike_state', 'V'],
+                  accesses = ['I'],
+                  params = ['resting_potential', 'threshold', 'reset_potential', 'capacitance', 'resistance'],
+                  internals = OrderedDict([('internalV',0.0)])):
     """
-    Return a standard main function block.
+    Return a standard main function block for given Neurodriver variables.
     """
+    arg_blocks = [
+            blocks.ExprBlock("int", "num_comps", is_arg=True),
+            blocks.ExprBlock("%(dt)s", "dt", is_arg=True),
+            blocks.ExprBlock("int", "n_steps", is_arg=True)]
+    
+
+    template_blocks = [blocks.StringBlock("int tid = threadIdx.x + blockIdx.x * blockDim.x;"),
+                       blocks.StringBlock("int total_threads = gridDim.x * blockDim.x;"),
+                       blocks.StringBlock("%(dt)s ddt = dt*1000.; // s to ms"),]
+
+    end_blocks = [blocks.StringBlock()]
+
+    for i in accesses:
+        arg_blocks.append(blocks.ExprBlock("\n%(" + i + ")s", "g_" + i, pointer_depth=1, is_arg=True))
+        template_blocks.append(blocks.StringBlock("%(" + i + ")s " + i + ";"))
+    for i in params:
+        arg_blocks.append(blocks.ExprBlock("\n%(" + i + ")s", "g_" + i, pointer_depth=1, is_arg=True))
+        template_blocks.append(blocks.StringBlock("%(" + i + ")s " + i + ";"))
+    for i in internals:
+        arg_blocks.append(blocks.ExprBlock("\n%(" + i + ")s", "g_" + i, pointer_depth=1, is_arg=True))
+        template_blocks.append(blocks.StringBlock("%(" + i + ")s " + i + ";"))
+    for i in updates:
+        arg_blocks.append(blocks.ExprBlock("\n%(" + i + ")s", "g_" + i, pointer_depth=1, is_arg=True))
+        template_blocks.append(blocks.StringBlock("%(" + i + ")s " + i + ";"))
+
+    template_blocks.append(blocks.StringBlock("for(int i_comp = tid; i_comp < num_comps; i_comp += total_threads) {"))
+    if 'spike_state' in updates:
+        template_blocks.append(blocks.StringBlock("spike = 0;"))
+    for i in accesses:
+        template_blocks.append(blocks.StringBlock(i + " = g_" + i + "[i_comp];"))
+    for i in params:
+        template_blocks.append(blocks.StringBlock(i + " = g_" + i + "[i_comp];"))
+        end_blocks.append(blocks.StringBlock("g_" + i + "[i_comp] = " + i + ";"))
+    for i in internals:
+        template_blocks.append(blocks.StringBlock(i + " = g_" + i + "[i_comp];"))
+        end_blocks.append(blocks.StringBlock("g_" + i + "[i_comp] = " + i + ";"))
+    for i in updates:
+        template_blocks.append(blocks.StringBlock(i + " = g_" + i + "[i_comp];"))
+        end_blocks.append(blocks.StringBlock("g_" + i + "[i_comp] = " + i + ";"))
+
+    end_blocks.append(blocks.StringBlock("}"))
+
     main_block = blocks.FunctionBlock(
-        "int", "main", [
-            blocks.ExprBlock("int", "argc", is_arg=True),
-            blocks.ExprBlock("char", "argv", pointer_depth=1, array_depth=1,
-                             is_arg=True)
-        ],
-        sticky_end=[blocks.StringBlock("return 0;")]
+        "__global__ void", "update", arg_blocks, sticky_front=template_blocks,sticky_end=end_blocks
     )
     return main_block
 
@@ -113,36 +155,91 @@ def filter_body_nodes(body):
 
 def get_op(op, arg1, arg2):
     if isinstance(op, ast.Add):
-        return "{} + {}".format(arg1, arg2)
+        return "(({}) + ({}))".format(arg1, arg2)
     elif isinstance(op, ast.Sub):
-        return "{} - {}".format(arg1, arg2)
+        return "(({} - {}))".format(arg1, arg2)
     elif isinstance(op, ast.Mult):
-        return "{} * {}".format(arg1, arg2)
+        return "(({}) * ({}))".format(arg1, arg2)
     elif isinstance(op, ast.Div) or isinstance(op, ast.FloorDiv):
-        return "{} / {}".format(arg1, arg2)
+        return "(({}) / ({}))".format(arg1, arg2)
     elif isinstance(op, ast.Mod):
-        return "{} % {}".format(arg1, arg2)
+        return "(({}) % ({}))".format(arg1, arg2)
     elif isinstance(op, ast.pow):
         return "pow((double){}, (double){})".format(arg1, arg2)
     elif isinstance(op, ast.LShift):
-        return "{} << {}".format(arg1, arg2)
+        return "(({}) << ({}))".format(arg1, arg2)
     elif isinstance(op, ast.RShift):
-        return "{} >> {}".format(arg1, arg2)
+        return "(({}) >> ({}))".format(arg1, arg2)
     elif isinstance(op, ast.BitOr):
-        return "{} | {}".format(arg1, arg2)
+        return "(({}) | ({}))".format(arg1, arg2)
     elif isinstance(op, ast.BitXor):
-        return "{} ^ {}".format(arg1, arg2)
+        return "(({}) ^ ({}))".format(arg1, arg2)
     elif isinstance(op, ast.BitAnd):
-        return "{} & {}".format(arg1, arg2)
+        return "(({}) & ({}))".format(arg1, arg2)
     raise Exception("Could not identify operator " + str(op))
 
 
 def handle_op_node(node):
     if isinstance(node, ast.BinOp):
-        if isinstance(node.left, ast.Num) and isinstance(node.right, ast.Num):
-            return get_op(node.op, node.left.n, node.right.n)
+        if isinstance(node.left, ast.Num):
+            node_left = node.left.n
+        if isinstance(node.left, ast.Name):
+            node_left = node.left.id
+        if isinstance(node.left, ast.BinOp):
+            node_left = handle_op_node(node.left)
+        if isinstance(node.left, ast.Call):
+            # print(node.left.func.id)
+            arguments = '(' + ','.join([handle_op_node(i) for i in node.left.args]) + ')'
+            node_left = node.left.func.id + arguments
+        else:
+            print(node.left)
+        if isinstance(node.right, ast.Num):
+            node_right = node.right.n
+        if isinstance(node.right, ast.Name):
+            node_right = node.right.id
+        if isinstance(node.right, ast.BinOp):
+            node_right = handle_op_node(node.right)
+        if isinstance(node.right, ast.Call):
+            arguments = '(' + ','.join([handle_op_node(i) for i in node.right.args]) + ')'
+            node_left = node.right.func.id + arguments
+        else:
+            print(node.right)
+        return get_op(node.op, node_left, node_right)
+    if isinstance(node, ast.Compare):
+        return handle_op_node(node.left) + ''.join([handle_op_node(i) for i in node.ops]) + ''.join([handle_op_node(i) for i in node.comparators])
     elif isinstance(node, ast.Num):
         return node.n
+    elif isinstance(node, ast.Str):
+        return node.s
+    elif isinstance(node, ast.Name):
+        return node.id
+    elif isinstance(node, ast.Gt):
+        return '>'
+    elif isinstance(node, ast.Eq):
+        return '=='
+    elif isinstance(node, ast.NotEq):
+        return '!='
+    elif isinstance(node, ast.Lt):
+        return '<'
+    elif isinstance(node, ast.LtE):
+        return '<='
+    elif isinstance(node, ast.GtE):
+        return '>='
+    elif isinstance(node, ast.Is):
+        return '='
+    elif isinstance(node, ast.IsNot):
+        return '!='
+    elif isinstance(node, ast.In):
+        return '<'
+    elif isinstance(node, ast.NotIn):
+        return '>='
+    elif isinstance(node, ast.And):
+        return '&&'
+    elif isinstance(node, ast.Or):
+        return '||'
+    elif isinstance(node, ast.BoolOp):
+        return (handle_op_node(node.op)).join(['(' + handle_op_node(i)+ ')' for i in node.values])
+    print(node.left, node.right)
     raise Exception("Could not identify node op")
 
 
@@ -196,9 +293,9 @@ def evaluate_node(node, parent):
             # Create the loop, and put the range constructor before it
             # and the range destructor after it.
             range_block = blocks.ForBlock(
-                iterator_block.name, "{}->length".format(range_obj.name),
-                before=[range_obj], after=[range_obj.destructor()],
-                sticky_front=[num_obj])
+                iterator_block.name, stop,
+                before=[], after=[range_obj.destructor()],
+                sticky_front=[])
 
             # Add the for loop to the parent block
             parent.append_block(range_block)
@@ -208,6 +305,17 @@ def evaluate_node(node, parent):
             for_body = filter_body_nodes(node.body)
             for f_node in for_body:
                 evaluate_node(f_node, range_block)
+    elif isinstance(node, ast.If):
+        range_block = blocks.IfBlock(
+                handle_op_node(node.test),
+                before=[], after=[],
+                sticky_front=[])
+        parent.append_block(range_block)
+        for_body = filter_body_nodes(node.body)
+        print("If Statement: ", node.body)
+        for f_node in node.body:
+            print(f_node)
+            evaluate_node(f_node, range_block)
     elif isinstance(node, ast.Expr):
         if isinstance(node.value, ast.Call):
             if node.value.func.id == "print":
@@ -227,20 +335,29 @@ def evaluate_node(node, parent):
                     assert isinstance(target, ast.Name)
                     assert isinstance(target.ctx, ast.Store)
                     num_obj = blocks.AssignBlock(
-                        "Object", target.id, "new_Integer({})".format(var),
+                        "Object", target.id, "{}".format(var),
                         pointer_depth=1)
                     parent.append_block(num_obj)
-                    parent.prepend_sticky_end(num_obj.destructor())
+                    # parent.prepend_sticky_end(num_obj.destructor())
             else:
                 raise Exception(
                     "No support yet for loading a value from literal {}"
                     .format(value))
+        elif isinstance(value, ast.BinOp):
+            for target in targets:
+                num_obj = blocks.AssignBlock(
+                            "Object", target.id, handle_op_node(value),
+                            pointer_depth=1)
+                parent.append_block(num_obj)
         else:
-            raise Exception(
-                "No support yet for loading a value from a non-literal")
+            print("Is BinOp?", isinstance(value, ast.BinOp))
+            print(handle_op_node(value))
+            
+            # raise Exception(
+            #     "No support yet for loading a value from a non-literal")
 
 
-def translate(file_, indent_size=4):
+def translate(file_, indent_size=4, main_func = None):
     """
     The function for actually translating the code.
     code:
@@ -261,7 +378,8 @@ def translate(file_, indent_size=4):
     top.append_blocks(includes_from_code(code))
 
     # Add main function
-    main_func = main_function()
+    if main_func is None:
+        main_func = main_function()
     top.append_block(main_func)
 
     nodes = filter_body_nodes(nodes)

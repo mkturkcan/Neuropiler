@@ -83,11 +83,13 @@ class Block(object):
         Add a variable name to the list of variables.
         """
         assert isinstance(var, ExprBlock)
+        """
         if var in self.variables:
             raise Exception(
                 ("Attempted to add variable '{}' in scope of {} when it "
                  "already exists: {}")
                 .format(var, self.__class__, map(str, self.variables)))
+        """
         self.variables.append(var)
 
     def append_block(self, block):
@@ -183,12 +185,11 @@ class FunctionBlock(Block):
         formatted blocks.
         """
         indentation = " "*self.indent if self.should_indent else ""
-
-        child_contents = map(str, self.before)
+        # print(", ".join([str(i) for i in self.args]))
+        child_contents = list(map(str, self.before))
         child_contents += ["{type} {name}({args}){{".format(
             type=self.func_type, name=self.name,
-            args=", ".join(map(str, self.args))
-        )]
+            args=", ".join([str(i) for i in self.args]))]
 
         for content in self.sticky_front + self.contents + self.sticky_end:
             content = content.block_strings()
@@ -199,6 +200,41 @@ class FunctionBlock(Block):
                 child_contents.append(indentation + str(content))
         child_contents += ["}"]
 
+        child_contents += map(str, self.after)
+
+        return child_contents
+
+class IfBlock(Block):
+    """
+    Block for if statements
+    """
+    def __init__(self, statement, contents=None,
+                 sticky_front=None, sticky_end=None, before=None, after=None,
+                 variables=None):
+        super(IfBlock, self).__init__(
+            contents=contents, sticky_front=sticky_front,
+            sticky_end=sticky_end, before=before, after=after,
+            variables=variables
+        )
+        self.statement = statement
+
+    def block_strings(self):
+        indentation = " "*self.indent if self.should_indent else ""
+
+        child_contents = list(map(str, self.before))
+        child_contents += [
+            "if ({iterator}){{"
+            .format(iterator=self.statement)
+        ]
+
+        for content in self.sticky_front + self.contents + self.sticky_end:
+            content = content.block_strings()
+            if isinstance(content, list):
+                for nested_content in content:
+                    child_contents.append(indentation + str(nested_content))
+            else:
+                child_contents.append(indentation + str(content))
+        child_contents += ["}"]
         child_contents += map(str, self.after)
 
         return child_contents
@@ -222,7 +258,7 @@ class ForBlock(Block):
     def block_strings(self):
         indentation = " "*self.indent if self.should_indent else ""
 
-        child_contents = map(str, self.before)
+        child_contents = list(map(str, self.before))
         child_contents += [
             "for({iterator} = 0; {iterator} < {max_iteration}; {iterator}++){{"
             .format(iterator=self.iterator, max_iteration=self.max_iteration)
@@ -293,8 +329,8 @@ class ExprBlock(InlineBlock):
         return self.name == other.name
 
     def __str__(self):
-        return "{} {}{}{}{}".format(
-            self.data_type, "*"*self.pointer_depth, self.name,
+        return "{}{} {}{}{}".format(
+            self.data_type, "* "*self.pointer_depth, self.name,
             "[]"*self.array_depth, "" if self.is_arg else ";")
 
 
@@ -326,14 +362,14 @@ class AssignBlock(ExprBlock):
 
     def destructor(self):
         if self.data_type == "Object":
-            return StringBlock("destroy({});".format(self.name))
+            return StringBlock("")
         else:
             raise Exception(("Attempting to call destroy on a variable that"
                              "isn't an object."))
 
     def __str__(self):
-        return "{} {}{}{} = {};".format(
-            self.data_type, "*"*self.pointer_depth, self.name,
+        return "{}{}{}{} = {};".format(
+            "", "", self.name,
             "[]"*self.array_depth, self.value)
 
 
@@ -352,7 +388,7 @@ class PrintBlock(InlineBlock):
                     "char", "{}_str".format(var), "str({})".format(var),
                     pointer_depth=1),
                 StringBlock('printf("%s\\n", {}_str);'.format(var)),
-                StringBlock("free({}_str);".format(var))
+                StringBlock("")
             ]
             super(PrintBlock, self).__init__(variables=[self.lines[0]])
         elif is_literal(node):
@@ -363,6 +399,7 @@ class PrintBlock(InlineBlock):
                 # Node is a literal number
                 var = node.n
             elif isinstance(node, ast.List) or isinstance(node, ast.Tuple):
+                print(list(node.elts))
                 raise Exception(
                     "No support yet for node of type List or Tuple")
             else:
@@ -389,7 +426,7 @@ class StringBlock(InlineBlock):
     Block for representing a single line/string from code.
     """
     def __init__(self, contents=""):
-        assert isinstance(contents, basestring)
+        assert isinstance(contents, str)
         self.contents = contents
 
     def block_strings(self):
