@@ -15,3 +15,7 @@ On terminal, type
 python neuropile.py examples/example_LeakyIAF.py
 ```
 to generate code for a LeakyIAF neuron example.
+
+## Development
+
+Main development repository for Neuropiler is currently https://github.com/mkturkcan/Neuropiler/. 
