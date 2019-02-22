@@ -5,9 +5,9 @@ from __future__ import print_function
 import re
 import ast
 
-import blocks
+from . import blocks
 
-from block_utils import *
+from .block_utils import *
 from collections import OrderedDict
 
 def prettyparseprintfile(filename, spaces=4):
@@ -352,7 +352,11 @@ def evaluate_node(node, parent):
         else:
             print("Is BinOp?", isinstance(value, ast.BinOp))
             print(handle_op_node(value))
-            
+            for target in targets:
+                num_obj = blocks.AssignBlock(
+                            "Object", target.id, "{}".format(handle_op_node(value)),
+                            pointer_depth=1)
+                parent.append_block(num_obj)
             # raise Exception(
             #     "No support yet for loading a value from a non-literal")
 

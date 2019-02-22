@@ -7,7 +7,7 @@ import os
 import shutil
 import subprocess
 
-import translate
+from . import translate
 
 
 def which(program):

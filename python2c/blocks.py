@@ -4,7 +4,7 @@ from __future__ import print_function
 
 import ast
 
-from block_utils import *
+from .block_utils import *
 
 
 class Block(object):
